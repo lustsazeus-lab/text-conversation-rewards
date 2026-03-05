@@ -33,12 +33,10 @@ export function isCollaborative(data: Readonly<IssueActivity>) {
  * Requested reviewers are ignored to avoid counting self-requests as collaboration.
  */
 export function nonAssigneeApprovedReviews(data: Readonly<IssueActivity>) {
-  if (!data.linkedMergedPullRequests[0]) {
+  if (!data.linkedMergedPullRequests.length) {
     return false;
   }
 
-  const pullRequest = data.linkedMergedPullRequests[0].self;
-  const pullReview = data.linkedMergedPullRequests[0];
   type RequestedReviewer = NonNullable<GitHubPullRequest["requested_reviewers"]>[number];
 
   const assigneeIds = new Set<number>([
@@ -46,21 +44,25 @@ export function nonAssigneeApprovedReviews(data: Readonly<IssueActivity>) {
     ...(data.self?.assignee?.id ? [data.self.assignee.id] : []),
   ]);
 
-  if (!pullReview.reviews || !pullRequest) {
-    return false;
-  }
+  for (const linkedPullReview of data.linkedMergedPullRequests) {
+    const pullRequest = linkedPullReview.self;
 
-  for (const review of pullReview.reviews) {
-    const isReviewRequestedForUser =
-      "requested_reviewers" in pullRequest &&
-      pullRequest.requested_reviewers?.some((reviewer: RequestedReviewer) => reviewer.id === review.user?.id);
-
-    if (isReviewRequestedForUser || !review.user?.id || review.user.type !== "User") {
+    if (!linkedPullReview.reviews || !pullRequest) {
       continue;
     }
 
-    if (review.state === "APPROVED" && !assigneeIds.has(review.user.id)) {
-      return true;
+    for (const review of linkedPullReview.reviews) {
+      const isReviewRequestedForUser =
+        "requested_reviewers" in pullRequest &&
+        pullRequest.requested_reviewers?.some((reviewer: RequestedReviewer) => reviewer.id === review.user?.id);
+
+      if (isReviewRequestedForUser || !review.user?.id || review.user.type !== "User") {
+        continue;
+      }
+
+      if (review.state === "APPROVED" && !assigneeIds.has(review.user.id)) {
+        return true;
+      }
     }
   }
 

@@ -111,7 +111,7 @@ describe("isCollaborative", () => {
     expect(isCollaborative(activity)).toBe(true);
   });
 
-  it("returns false when approval exists only on the second linked merged pull", () => {
+  it("returns true when approval exists on a later linked merged pull", () => {
     const activity = buildActivity({
       linkedMergedPullRequests: [
         {
@@ -135,7 +135,7 @@ describe("isCollaborative", () => {
       ],
     });
 
-    expect(nonAssigneeApprovedReviews(activity)).toBe(false);
+    expect(nonAssigneeApprovedReviews(activity)).toBe(true);
   });
 
   it("returns true when closer is not issue creator", () => {
