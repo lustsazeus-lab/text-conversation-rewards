@@ -2,44 +2,53 @@ import { GitHubPullRequest, GitHubPullRequestReviewState } from "../github-types
 import { IssueActivity } from "../issue-activity";
 import { ContextPlugin } from "../types/plugin-input";
 
+/** Returns true if the actor is a human user (not a Bot or other non-human type). */
+function isHumanActor(actor: { id: number; type?: string } | null | undefined): boolean {
+  return actor !== undefined && actor !== null && actor.type === "User";
+}
+
 export function isCollaborative(data: Readonly<IssueActivity>) {
   if (!data.self?.closed_by || !data.self.user) return false;
   const issueCreator = data.self.user;
 
   if (data.self.closed_by.id === issueCreator.id) {
-    const pricingEventsByNonAssignee = data.events.find(
-      (event) =>
-        event.event === "labeled" &&
-        "label" in event &&
-        (event.label.name.startsWith("Time: ") || event.label.name.startsWith("Priority: ")) &&
-        event.actor.id !== issueCreator.id
-    );
-    return !!pricingEventsByNonAssignee || !!nonAssigneeApprovedReviews(data);
+    const pricingEventsByNonAssignee = data.events.find((event) => {
+      if (event.event !== "labeled") return false;
+      if (!("label" in event)) return false;
+      const labelName = event.label.name;
+      if (!labelName.startsWith("Time: ") && !labelName.startsWith("Priority: ")) return false;
+      const actor = event.actor;
+      if (!isHumanActor(actor)) return false;
+      return actor.id !== issueCreator.id;
+    });
+    return !!pricingEventsByNonAssignee || nonAssigneeApprovedReviews(data).length > 0;
   }
   return true;
 }
 
-export function nonAssigneeApprovedReviews(data: Readonly<IssueActivity>) {
-  if (data.linkedMergedPullRequests[0] && data.self?.assignee) {
-    const pullRequest = data.linkedMergedPullRequests[0].self;
-    const pullReview = data.linkedMergedPullRequests[0];
-    const reviewsByNonAssignee: GitHubPullRequestReviewState[] = [];
-    const assignee = data.self.assignee;
-    type RequestedReviewer = NonNullable<GitHubPullRequest["requested_reviewers"]>[number];
+export function nonAssigneeApprovedReviews(data: Readonly<IssueActivity>): GitHubPullRequestReviewState[] {
+  if (!data.linkedMergedPullRequests[0] || !data.self?.assignee) {
+    return [];
+  }
+  const pullRequest = data.linkedMergedPullRequests[0].self;
+  const pullReview = data.linkedMergedPullRequests[0];
+  const reviewsByNonAssignee: GitHubPullRequestReviewState[] = [];
+  const assignee = data.self.assignee;
+  type RequestedReviewer = NonNullable<GitHubPullRequest["requested_reviewers"]>[number];
 
-    if (pullReview.reviews && pullRequest) {
-      for (const review of pullReview.reviews) {
-        const isReviewRequestedForUser =
-          "requested_reviewers" in pullRequest &&
-          pullRequest.requested_reviewers?.some((reviewer: RequestedReviewer) => reviewer.id === review.user?.id);
-        if (!isReviewRequestedForUser && review.user?.id) {
-          reviewsByNonAssignee.push(review);
-        }
+  if (pullReview.reviews && pullRequest) {
+    for (const review of pullReview.reviews) {
+      const isReviewRequestedForUser =
+        "requested_reviewers" in pullRequest &&
+        pullRequest.requested_reviewers?.some((reviewer: RequestedReviewer) => reviewer.id === review.user?.id);
+      if (!isReviewRequestedForUser && review.user?.id) {
+        reviewsByNonAssignee.push(review);
       }
     }
-    return reviewsByNonAssignee.filter((v) => v.user?.id !== assignee.id && v.state === "APPROVED");
   }
-  return false;
+  return reviewsByNonAssignee.filter(
+    (v) => v.user?.id !== assignee.id && v.user?.type === "User" && v.state === "APPROVED"
+  );
 }
 
 /*
