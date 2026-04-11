@@ -355,6 +355,94 @@ describe("payment-module.ts", () => {
     });
   });
 
+  describe("differential rewards for reopened issues", () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("loads previous rewards scoped to issue location and aggregates precisely", async () => {
+      const paymentModule = new PaymentModule(ctx);
+      const getOrCreateIssueLocation = jest.fn(async (_issue: { issueId: number; issueUrl: string }) => 42);
+      const not = jest.fn(async (_column: string, _operator: string, _value: null) => ({
+        data: [
+          { amount: "0.1", beneficiary_id: 7, location_id: 42, token_id: 11 },
+          { amount: "0.2", beneficiary_id: 7, location_id: 42, token_id: 11 },
+          { amount: "1.5", beneficiary_id: 9, location_id: 42, token_id: 11 },
+        ],
+        error: null,
+      }));
+      const eq = jest.fn((_column: string, _value: number) => ({ not }));
+
+      const select = jest.fn().mockReturnValue({ eq });
+      const from = jest.fn().mockReturnValue({ select });
+      (paymentModule as unknown as { _supabase: unknown })._supabase = { from };
+
+      (paymentModule as unknown as { context: ContextPlugin }).context = {
+        ...ctx,
+        adapters: {
+          supabase: {
+            location: {
+              getOrCreateIssueLocation,
+            },
+          },
+        },
+      } as unknown as ContextPlugin;
+
+      const rewards = await (
+        paymentModule as unknown as {
+          _loadPreviousRewards: (issue: {
+            issueId: number;
+            issueUrl: string;
+          }) => Promise<Record<string, { total: number }> | null>;
+        }
+      )._loadPreviousRewards({
+        issueId: 301,
+        issueUrl: "https://github.com/ubiquity-os-marketplace/text-conversation-rewards/issues/301",
+      });
+
+      expect(getOrCreateIssueLocation).toHaveBeenCalledWith({
+        issueId: 301,
+        issueUrl: "https://github.com/ubiquity-os-marketplace/text-conversation-rewards/issues/301",
+      });
+      expect(eq).toHaveBeenCalledWith("location_id", 42);
+      expect(not).toHaveBeenCalledWith("token_id", "is", null);
+      expect(rewards).toEqual({
+        user_7: { total: 0.3 },
+        user_9: { total: 1.5 },
+      });
+    });
+
+    it("calculates differential rewards using beneficiary user ids", async () => {
+      const paymentModule = new PaymentModule(ctx);
+      const currentResult: Result = {
+        alice: {
+          total: 3,
+          userId: 7,
+        },
+        bob: {
+          total: 1,
+          userId: 8,
+        },
+      };
+
+      const differential = (
+        paymentModule as unknown as {
+          _calculateDifferentialRewards: (current: Result, previous: Record<string, { total: number }>) => Result;
+        }
+      )._calculateDifferentialRewards(currentResult, {
+        user_7: { total: 2.25 },
+        user_8: { total: 1 },
+      });
+
+      expect(differential).toEqual({
+        alice: {
+          total: 0.75,
+          userId: 7,
+        },
+      });
+    });
+  });
+
   describe("_automaticTransferMode", () => {
     beforeEach(() => {
       ctx.env.PERMIT_FEE_RATE = EMPTY_STRING;
